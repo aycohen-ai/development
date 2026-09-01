@@ -257,7 +257,12 @@ def main():
                 detail_message, prepare_oc_install_fail_comment()
             )
 
-        if "failure" not in (pr_content_result, run_verifier_result, verify_result, oc_install_result):
+        if "failure" not in (
+            pr_content_result,
+            run_verifier_result,
+            verify_result,
+            oc_install_result,
+        ):
             detail_message = append_to(detail_message, prepare_generic_fail_comment())
 
         if outcome != "Pending Manual Review":
