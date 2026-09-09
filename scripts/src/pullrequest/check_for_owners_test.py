@@ -59,120 +59,125 @@ def entry(filename, status, previous_filename=None):
     return e
 
 
-class TestOwnersFileStatus:
-    """The status is emitted raw. Each workflow applies its own "net new"
-    policy to it, because they disagree on whether a rename counts."""
+# The status is emitted raw. Each workflow applies its own "net new" policy to
+# it, because they disagree on whether a rename counts.
 
-    @responses.activate
-    @pytest.mark.parametrize("status", ["added", "modified", "removed", "changed"])
-    def test_status_is_emitted_verbatim(self, monkeypatch, github_env, status):
-        run_check(monkeypatch, [entry(PARTNER_OWNERS, status)])
 
-        outputs = read_outputs(github_env)
-        assert outputs["merge_pr"] == "true"
-        assert outputs["file-status"] == status
-        assert "previous-filename" not in outputs
+@responses.activate
+@pytest.mark.parametrize("status", ["added", "modified", "removed", "changed"])
+def test_status_is_emitted_verbatim(monkeypatch, github_env, status):
+    run_check(monkeypatch, [entry(PARTNER_OWNERS, status)])
 
-    @responses.activate
-    def test_rename_emits_previous_filename(self, monkeypatch, github_env):
+    outputs = read_outputs(github_env)
+    assert outputs["merge_pr"] == "true"
+    assert outputs["file-status"] == status
+    assert "previous-filename" not in outputs
+
+
+@responses.activate
+def test_rename_emits_previous_filename(monkeypatch, github_env):
+    run_check(
+        monkeypatch,
+        [
+            entry(
+                PARTNER_OWNERS,
+                "renamed",
+                previous_filename="charts/partners/old-acme/awesome/OWNERS",
+            )
+        ],
+    )
+
+    outputs = read_outputs(github_env)
+    assert outputs["merge_pr"] == "true"
+    assert outputs["file-status"] == "renamed"
+    assert outputs["previous-filename"] == "charts/partners/old-acme/awesome/OWNERS"
+
+
+@responses.activate
+def test_chart_identity_is_emitted(monkeypatch, github_env):
+    run_check(monkeypatch, [entry(PARTNER_OWNERS, "added")])
+
+    outputs = read_outputs(github_env)
+    assert outputs["category"] == "partners"
+    assert outputs["organization"] == "acme"
+    assert outputs["chart-name"] == "awesome"
+
+
+# Every rejection below sets merge_pr=false and exits non-zero, which is what
+# stops the calling workflow from reaching its merge step.
+
+
+@responses.activate
+def test_rejects_pr_with_no_files(monkeypatch, github_env):
+    with pytest.raises(SystemExit) as e:
+        run_check(monkeypatch, [])
+
+    assert e.value.code == 10
+    assert read_outputs(github_env)["merge_pr"] == "false"
+
+
+@responses.activate
+def test_rejects_pr_with_multiple_files(monkeypatch, github_env):
+    with pytest.raises(SystemExit) as e:
         run_check(
             monkeypatch,
             [
-                entry(
-                    PARTNER_OWNERS,
-                    "renamed",
-                    previous_filename="charts/partners/old-acme/awesome/OWNERS",
-                )
+                entry(PARTNER_OWNERS, "added"),
+                entry("charts/partners/acme/other/OWNERS", "added"),
             ],
         )
 
-        outputs = read_outputs(github_env)
-        assert outputs["merge_pr"] == "true"
-        assert outputs["file-status"] == "renamed"
-        assert outputs["previous-filename"] == "charts/partners/old-acme/awesome/OWNERS"
-
-    @responses.activate
-    def test_chart_identity_is_emitted(self, monkeypatch, github_env):
-        run_check(monkeypatch, [entry(PARTNER_OWNERS, "added")])
-
-        outputs = read_outputs(github_env)
-        assert outputs["category"] == "partners"
-        assert outputs["organization"] == "acme"
-        assert outputs["chart-name"] == "awesome"
+    assert e.value.code == 20
+    assert read_outputs(github_env)["merge_pr"] == "false"
 
 
-class TestRejections:
-    """Every rejection sets merge_pr=false and exits non-zero, which is what
-    stops the calling workflow from reaching its merge step."""
-
-    @responses.activate
-    def test_no_files(self, monkeypatch, github_env):
-        with pytest.raises(SystemExit) as e:
-            run_check(monkeypatch, [])
-
-        assert e.value.code == 10
-        assert read_outputs(github_env)["merge_pr"] == "false"
-
-    @responses.activate
-    def test_multiple_files(self, monkeypatch, github_env):
-        with pytest.raises(SystemExit) as e:
-            run_check(
-                monkeypatch,
-                [
-                    entry(PARTNER_OWNERS, "added"),
-                    entry("charts/partners/acme/other/OWNERS", "added"),
-                ],
-            )
-
-        assert e.value.code == 20
-        assert read_outputs(github_env)["merge_pr"] == "false"
-
-    @responses.activate
-    def test_file_is_not_an_owners_file(self, monkeypatch, github_env):
-        with pytest.raises(SystemExit) as e:
-            run_check(
-                monkeypatch,
-                [entry("charts/partners/acme/awesome/1.4.0/report.yaml", "added")],
-            )
-
-        assert e.value.code == 30
-        outputs = read_outputs(github_env)
-        assert outputs["merge_pr"] == "false"
-        assert "file-status" not in outputs
-
-    @responses.activate
-    def test_owners_file_from_a_disallowed_category(self, monkeypatch, github_env):
-        """A community OWNERS file must not be merged by the partners-only
-        workflow, even though it is a well-formed OWNERS submission."""
-        with pytest.raises(SystemExit) as e:
-            run_check(
-                monkeypatch,
-                [entry("charts/community/acme/awesome/OWNERS", "added")],
-                categories=("partners",),
-            )
-
-        assert e.value.code == 30
-        assert read_outputs(github_env)["merge_pr"] == "false"
-
-    @responses.activate
-    def test_unrecognised_status_is_rejected(self, monkeypatch, github_env):
-        """An unrecognised status must not fall through as a mergeable file.
-
-        Surfaced as a SubmissionError rather than a PRFilesError: Submission
-        wraps it so the workflows keep seeing the one error type they already
-        report on.
-        """
-        responses.get(FILES_URL, json=[{"filename": PARTNER_OWNERS, "status": "nope"}])
-        monkeypatch.setattr(
-            "sys.argv",
-            [
-                "check-for-owners",
-                "--api-url",
-                API_URL,
-                "--allowed-category",
-                "partners",
-            ],
+@responses.activate
+def test_rejects_file_that_is_not_an_owners_file(monkeypatch, github_env):
+    with pytest.raises(SystemExit) as e:
+        run_check(
+            monkeypatch,
+            [entry("charts/partners/acme/awesome/1.4.0/report.yaml", "added")],
         )
 
-        with pytest.raises(submission.SubmissionError, match="unrecognised status"):
-            check_for_owners.main()
+    assert e.value.code == 30
+    outputs = read_outputs(github_env)
+    assert outputs["merge_pr"] == "false"
+    assert "file-status" not in outputs
+
+
+@responses.activate
+def test_rejects_owners_file_from_a_disallowed_category(monkeypatch, github_env):
+    """A community OWNERS file must not be merged by the partners-only
+    workflow, even though it is a well-formed OWNERS submission."""
+    with pytest.raises(SystemExit) as e:
+        run_check(
+            monkeypatch,
+            [entry("charts/community/acme/awesome/OWNERS", "added")],
+            categories=("partners",),
+        )
+
+    assert e.value.code == 30
+    assert read_outputs(github_env)["merge_pr"] == "false"
+
+
+@responses.activate
+def test_rejects_unrecognised_status(monkeypatch, github_env):
+    """An unrecognised status must not fall through as a mergeable file.
+
+    Surfaced as a SubmissionError rather than a PRFilesError: Submission wraps
+    it so the workflows keep seeing the one error type they already report on.
+    """
+    responses.get(FILES_URL, json=[{"filename": PARTNER_OWNERS, "status": "nope"}])
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "check-for-owners",
+            "--api-url",
+            API_URL,
+            "--allowed-category",
+            "partners",
+        ],
+    )
+
+    with pytest.raises(submission.SubmissionError, match="unrecognised status"):
+        check_for_owners.main()
