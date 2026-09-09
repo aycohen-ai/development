@@ -27,11 +27,20 @@ jobs:
         with:
           python-version: ${{ steps.setup-python.outputs.python-version }}
 
-      - uses: jitterbit/get-changed-files@v1
+      # There is no pull request on a push event, so this compares the two
+      # commits the event carries. Outputs are JSON arrays, one per status.
+      - name: Get files changed by the push
         id: filesChangedOrModified
-        with:
-          format: space-delimited
-          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          BASE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.event.after }}
+        run: |
+          ./ve1/bin/pr-files --compare \
+            --repository "${GITHUB_REPOSITORY}" \
+            --base "${BASE_SHA}" \
+            --head "${HEAD_SHA}" \
+            --format github-output
 
       - name: Printing changes made
         env:
