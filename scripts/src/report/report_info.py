@@ -9,9 +9,8 @@ REPORT_ANNOTATIONS = "annotations"
 REPORT_RESULTS = "results"
 REPORT_DIGESTS = "digests"
 REPORT_METADATA = "metadata"
-# chart-verifier emits this phrase in lowercase, as part of a longer
-# "error executing command: ..." line. It is matched case-insensitively so that a
-# casing change upstream doesn't send us down the JSON parsing path below.
+# Substring of chart-verifier's "error executing command: ..." line, which it
+# emits lowercase. Matched case-insensitively.
 SHA_ERROR = "digest in report did not match report content"
 
 
@@ -100,10 +99,9 @@ def _get_report_info(
                 )
             output = out.stdout
 
-        # The docker SDK and subprocess both hand back bytes. Decode once here so
-        # everything below operates on text. Undecodable bytes are replaced rather
-        # than raising: output that isn't valid UTF-8 isn't valid JSON either, so
-        # it is better to fall through to the error below than to traceback.
+        # Undecodable bytes are replaced rather than raising: output that isn't
+        # valid UTF-8 isn't valid JSON either, so falling through to the error
+        # below beats a traceback.
         if isinstance(output, bytes):
             output = output.decode("utf-8", errors="replace")
 
