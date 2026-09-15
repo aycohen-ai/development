@@ -9,17 +9,16 @@ REPORT_ANNOTATIONS = "annotations"
 REPORT_RESULTS = "results"
 REPORT_DIGESTS = "digests"
 REPORT_METADATA = "metadata"
-# Substring of chart-verifier's "error executing command: ..." line, which it
-# emits lowercase. Matched case-insensitively.
+# Substring of chart-verifier's "error executing command: ..." line, matched
+# case-insensitively.
 SHA_ERROR = "digest in report did not match report content"
 
 
 def write_error_log(*msg):
     """Write msg to the errors file and to the console.
 
-    The errors file is rendered verbatim into the PR comment, so only include
-    content that is actionable for the chart submitter. Details that only help a
-    maintainer debugging the workflow belong on the console instead.
+    The errors file is rendered verbatim into the PR comment, so keep it to
+    content that is actionable for the chart submitter.
     """
     directory = os.environ.get("WORKFLOW_WORKING_DIRECTORY")
     if directory:
@@ -99,11 +98,20 @@ def _get_report_info(
                 )
             output = out.stdout
 
-        # Undecodable bytes are replaced rather than raising: output that isn't
-        # valid UTF-8 isn't valid JSON either, so falling through to the error
-        # below beats a traceback.
         if isinstance(output, bytes):
-            output = output.decode("utf-8", errors="replace")
+            try:
+                output = output.decode("utf-8")
+            except UnicodeDecodeError as err:
+                # Strict: U+FFFD parses as valid JSON, so replacing would
+                # publish a corrupted digest. Render lossily for the console.
+                lossy = output.decode("utf-8", errors="replace")
+                print(f"[ERROR] exception was: {err=}, {type(err)=}")
+                print(f"[ERROR] chart-verifier output was:\n{lossy}")
+                write_error_log(
+                    "[ERROR] The chart-verifier report could not be processed.",
+                    "[ERROR] chart-verifier output was not valid UTF-8.",
+                )
+                sys.exit(1)
 
         if SHA_ERROR in output.lower():
             msg = f"[ERROR] {SHA_ERROR}"
@@ -123,8 +131,10 @@ def _get_report_info(
             sys.exit(1)
 
     if info_type not in report_out:
-        msg = f"Error extracting {info_type} from the report:", report_out.strip()
-        write_error_log(msg)
+        write_error_log(
+            f"[ERROR] The chart-verifier report has no {info_type} section.",
+            f"[ERROR] chart-verifier report was:\n{json.dumps(report_out)}",
+        )
         sys.exit(1)
 
     if info_type == REPORT_ANNOTATIONS:
