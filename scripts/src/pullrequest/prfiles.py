@@ -46,7 +46,11 @@ XRATEREMAIN = "X-RateLimit-Remaining"
 
 
 class FileStatus(str, Enum):
-    """The status GitHub reports for a single file in a diff."""
+    """The status GitHub reports for a single file in a diff.
+
+    UNRECOGNISED is ours, not GitHub's: it stands in for a status this module
+    does not know. See _to_pr_file for why it exists.
+    """
 
     ADDED = "added"
     REMOVED = "removed"
@@ -55,6 +59,7 @@ class FileStatus(str, Enum):
     COPIED = "copied"
     CHANGED = "changed"
     UNCHANGED = "unchanged"
+    UNRECOGNISED = "unrecognised"
 
 
 @dataclass(frozen=True)
@@ -64,7 +69,10 @@ class PRFile:
     Attributes:
         path (str): the file's path relative to the repository root. For a
             rename this is the NEW path.
-        status (FileStatus): what happened to the file.
+        status (FileStatus): what happened to the file, or UNRECOGNISED if
+            GitHub reported something this module does not know. Callers that
+            branch on the status must reject UNRECOGNISED rather than treat it
+            as a normal modification.
         previous_path (str | None): the path before a rename, otherwise None.
     """
 
@@ -90,17 +98,24 @@ def _headers():
 
     Resolved here rather than passed in so that a token can never end up in
     list_pr_files' cache key.
+
+    Raises:
+        PRFilesError: if BOT_TOKEN is unset. Querying anonymously would work
+            for a handful of calls and then start failing on GitHub's 60/hour
+            unauthenticated limit, which surfaces as an unrelated-looking 403
+            partway through a run. A missing token is a configuration error, so
+            it is reported as one here.
     """
-    headers = {"Accept": "application/vnd.github.v3+json"}
     token = os.environ.get("BOT_TOKEN")
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    else:
-        print(
-            "[WARNING] BOT_TOKEN is not set: querying GitHub anonymously, "
-            "which is subject to a much lower rate limit."
+    if not token:
+        raise PRFilesError(
+            "BOT_TOKEN is not set. It is required to query the GitHub API for "
+            "the list of files a change touches."
         )
-    return headers
+    return {
+        "Accept": "application/vnd.github.v3+json",
+        "Authorization": f"Bearer {token}",
+    }
 
 
 def _get(url, headers):
@@ -139,11 +154,13 @@ def _get(url, headers):
 def _to_pr_file(entry):
     """Converts one GitHub diff entry into a PRFile.
 
+    A status this module does not know becomes FileStatus.UNRECOGNISED rather
+    than an error, so that callers which only want paths keep working. It is
+    never silently treated as a modification: callers that branch on the status
+    to decide whether to auto-merge reject UNRECOGNISED.
+
     Raises:
-        PRFilesError: if the entry is malformed or carries a status this module
-            does not know how to classify. An unrecognised status is fatal on
-            purpose: callers branch on it to decide whether to auto-merge, and
-            guessing "modified" would let an unreviewed change through.
+        PRFilesError: if the entry is malformed.
     """
     if not isinstance(entry, dict):
         raise PRFilesError(
@@ -157,11 +174,18 @@ def _to_pr_file(entry):
     raw_status = entry.get("status")
     try:
         status = FileStatus(raw_status)
-    except ValueError as e:
-        raise PRFilesError(
-            f"GitHub reported an unrecognised status {raw_status!r} for {path}. "
-            f"Known values: {', '.join(s.value for s in FileStatus)}."
-        ) from e
+    except ValueError:
+        # Degrade to UNRECOGNISED rather than raising. Most callers only want
+        # paths, and failing the whole list would take every chart submission
+        # down the moment GitHub adds a status value. The callers that do read
+        # the status reject UNRECOGNISED explicitly, so this stays fail-closed
+        # exactly where it matters.
+        print(
+            f"[WARNING] GitHub reported an unrecognised status {raw_status!r} for "
+            f"{path}. Known values: "
+            f"{', '.join(s.value for s in FileStatus if s is not FileStatus.UNRECOGNISED)}."
+        )
+        status = FileStatus.UNRECOGNISED
 
     return PRFile(
         path=path,

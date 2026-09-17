@@ -24,15 +24,20 @@ from submission import submission
 
 
 @pytest.fixture(autouse=True)
-def clear_pr_files_cache():
+def clear_pr_files_cache(monkeypatch):
     """Drop the memoized PR file lists between tests.
 
     prfiles.list_pr_files is cached on api_url, and several scenarios below
     deliberately reuse an api_url while mocking a different file list for it.
     Without clearing, a scenario is handed the previous one's files instead of
     its own mock.
+
+    A token is set for the same reason the responses mock is: prfiles refuses
+    to query GitHub without one, and these tests exercise everything after the
+    request rather than the request itself.
     """
     prfiles.list_pr_files.cache_clear()
+    monkeypatch.setenv("BOT_TOKEN", "a-token")
     yield
     prfiles.list_pr_files.cache_clear()
 

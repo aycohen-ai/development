@@ -170,12 +170,14 @@ def send_pull_request_metrics(write_key, g):
             pr_content, type, provider, chart, version = check_and_get_pr_content(
                 pr, repo
             )
-        except prfiles.TruncatedFileListError as e:
+        except prfiles.PRFilesError as e:
             # Metrics is the one caller where a partial answer beats no answer:
             # this walks every pull request the repository has ever had, and
-            # nothing gates on the result. Skipping one oversized pull request
-            # costs a single data point; letting it propagate would abandon the
-            # entire nightly run.
+            # nothing gates on the result. Skipping one pull request costs a
+            # single data point; letting the error propagate would abandon the
+            # entire run. Catching the base class rather than only
+            # TruncatedFileListError, because a transient 5xx on any one of
+            # several thousand requests is likelier than an oversized PR.
             print(f"[WARNING] Skipping PR {pr.number}, cannot list its files: {e}")
             check_rate_limit(g, False)
             continue

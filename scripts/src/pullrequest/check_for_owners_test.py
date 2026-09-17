@@ -11,7 +11,6 @@ import pytest
 import responses
 
 from pullrequest import check_for_owners, prfiles
-from submission import submission
 
 API_URL = "https://api.github.com/repos/openshift-helm-charts/charts/pulls/42"
 FILES_URL = f"{API_URL}/files"
@@ -164,8 +163,9 @@ def test_rejects_owners_file_from_a_disallowed_category(monkeypatch, github_env)
 def test_rejects_unrecognised_status(monkeypatch, github_env):
     """An unrecognised status must not fall through as a mergeable file.
 
-    Surfaced as a SubmissionError rather than a PRFilesError: Submission wraps
-    it so the workflows keep seeing the one error type they already report on.
+    prfiles keeps the file rather than failing the whole list, so the rejection
+    has to happen here: this is the caller that branches on the status, and a
+    status it cannot read means it cannot tell a new OWNERS file from an edit.
     """
     responses.get(FILES_URL, json=[{"filename": PARTNER_OWNERS, "status": "nope"}])
     monkeypatch.setattr(
@@ -179,5 +179,10 @@ def test_rejects_unrecognised_status(monkeypatch, github_env):
         ],
     )
 
-    with pytest.raises(submission.SubmissionError, match="unrecognised status"):
+    with pytest.raises(SystemExit) as e:
         check_for_owners.main()
+
+    assert e.value.code == 40
+    outputs = read_outputs(github_env)
+    assert outputs["merge_pr"] == "false"
+    assert "status" in outputs["msg"]

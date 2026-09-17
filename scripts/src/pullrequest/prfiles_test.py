@@ -112,12 +112,21 @@ def test_rename_carries_previous_path():
 
 
 @responses.activate
-def test_unrecognised_status_is_fatal():
-    """Guessing would let an unreviewed change through an OWNERS gate."""
+def test_unrecognised_status_becomes_unrecognised(capsys):
+    """A status we do not know must not stop callers that only want paths.
+
+    Guessing "modified" would let an unreviewed change through an OWNERS gate,
+    so it is surfaced as UNRECOGNISED for the callers that branch on it to
+    reject, rather than as a value they would act on.
+    """
     responses.get(FILES_URL, json=[entry("charts/a/OWNERS", "teleported")])
 
-    with pytest.raises(prfiles.PRFilesError, match="unrecognised status"):
-        prfiles.list_pr_files(API_URL)
+    files = prfiles.list_pr_files(API_URL)
+
+    assert files == (
+        prfiles.PRFile("charts/a/OWNERS", prfiles.FileStatus.UNRECOGNISED),
+    )
+    assert "unrecognised status 'teleported'" in capsys.readouterr().out
 
 
 @responses.activate
@@ -314,13 +323,16 @@ def test_token_is_sent_as_a_bearer_header():
 
 
 @responses.activate
-def test_absent_token_sends_no_authorization_header(monkeypatch):
+def test_absent_token_is_rejected_before_any_request(monkeypatch):
+    """Anonymous requests would succeed a few times, then start failing on
+    GitHub's 60/hour limit as a 403 that looks like something else."""
     monkeypatch.delenv("BOT_TOKEN", raising=False)
     responses.get(FILES_URL, json=[])
 
-    prfiles.list_pr_files(API_URL)
+    with pytest.raises(prfiles.PRFilesError, match="BOT_TOKEN is not set"):
+        prfiles.list_pr_files(API_URL)
 
-    assert "Authorization" not in responses.calls[0].request.headers
+    assert len(responses.calls) == 0
 
 
 # paths()

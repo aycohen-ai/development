@@ -1,6 +1,7 @@
 import argparse
 import sys
 
+from pullrequest import prfiles
 from submission import submission
 from tools import gitutils
 
@@ -47,9 +48,9 @@ def main():
     # modified_files and files are filled by the same API call, so the single
     # file counted above has to be here too. Guarded anyway because the
     # calling workflows read its status below to decide whether to run the
-    # chart name lock check, and an absent status reads as "not a new file",
-    # which would skip that check.
-    if not s.files:
+    # chart name lock check, and an absent or uninterpretable status reads as
+    # "not a new file", which would skip that check.
+    if not s.files or s.files[0].status is prfiles.FileStatus.UNRECOGNISED:
         print("The PR file is missing status information.")
         gitutils.add_output("merge_pr", "false")
         gitutils.add_output(
