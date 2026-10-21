@@ -262,7 +262,8 @@ class Submission:
         try:
             self.modified_files = prartifact.get_modified_files(self.api_url)
         except SystemExit as e:
-            raise SubmissionError(e) from e
+            # e.code carries the error message from prartifact
+            raise SubmissionError(e.code) from e
 
     def parse_modified_files(self, repo_path: str = ""):
         """Classify the list of modified files.

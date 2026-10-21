@@ -29,11 +29,11 @@ def get_pull_request(api_url: str) -> PullRequest:
 
     Raises:
         ValueError: if api_url is not a pull request API URL
+        SystemExit: with an error message, if BOT_TOKEN is not set
     """
     bot_token = os.environ.get("BOT_TOKEN")
     if not bot_token:
-        print("[ERROR] BOT_TOKEN environment variable is not set")
-        sys.exit(1)
+        sys.exit("[ERROR] BOT_TOKEN environment variable is not set")
     match = pr_api_url_pattern.match(api_url)
     if not match:
         raise ValueError(f"Not a pull request API URL: {api_url}")
@@ -71,6 +71,9 @@ def get_modified_files(api_url):
 
     Returns:
         list[str]: List of modified files
+
+    Raises:
+        SystemExit: with an error message, if the files cannot be listed
     """
     try:
         return [
@@ -79,8 +82,10 @@ def get_modified_files(api_url):
             if file.filename
         ]
     except (GithubException, ValueError) as e:
-        print(f"[ERROR] getting pr files: {e}")
-        sys.exit(1)
+        # The message is carried in the exit status (SystemExit.code), so
+        # callers that catch it can surface it (submission.py puts it in the
+        # PR comment); uncaught, the interpreter prints it and exits 1
+        sys.exit(f"[ERROR] getting pr files: {e}")
 
 
 def get_labels(api_url):

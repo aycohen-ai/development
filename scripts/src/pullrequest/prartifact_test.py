@@ -59,13 +59,27 @@ def test_get_modified_files_returns_all_filenames():
 
 @responses.activate
 def test_get_modified_files_exits_on_github_error():
-    """A GitHub API error fails the run, as before"""
+    """A GitHub API error fails the run, as before
+
+    The error message travels in the exit status, so callers can surface it
+    (submission.py turns it into the PR comment message).
+    """
     responses.get(files_wire_url, json={"message": "Not Found"}, status=404)
 
     with pytest.raises(SystemExit) as exc_info:
         prartifact.get_modified_files(pr_api_url)
 
-    assert exc_info.value.code == 1
+    assert exc_info.value.code.startswith("[ERROR] getting pr files: 404")
+
+
+def test_get_modified_files_exits_without_bot_token(monkeypatch):
+    """A missing BOT_TOKEN fails the run with an explicit message"""
+    monkeypatch.delenv("BOT_TOKEN")
+
+    with pytest.raises(SystemExit) as exc_info:
+        prartifact.get_modified_files(pr_api_url)
+
+    assert exc_info.value.code == "[ERROR] BOT_TOKEN environment variable is not set"
 
 
 @responses.activate

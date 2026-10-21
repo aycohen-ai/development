@@ -483,8 +483,12 @@ def test_submission_not_exist():
         status=404,
     )
 
-    with pytest.raises(submission.SubmissionError):
+    with pytest.raises(submission.SubmissionError) as exc_info:
         submission.Submission(api_url=api_url_doesnt_exist)
+
+    # The API error message must survive the SystemExit -> SubmissionError
+    # conversion: it becomes the PR comment message
+    assert "getting pr files" in str(exc_info.value)
 
 
 @dataclass
