@@ -45,12 +45,33 @@ mechanics).
 `Both chart source directory and tarball should not exist`. Web-catalog-only delivery **must**
 be report-only, and the report must carry a package digest.
 
+**If you supply a report, CI does not re-verify.** Your report's results *are* the verdict —
+CI reads its `failed` count directly, and `chart-testing`, `images-are-certified` and the rest
+are **not** re-run. Submit a chart with *no* report and CI instead runs the full verifier
+against a live cluster and judges what it produces.
+
+CI still ties the report to a real chart. With a chart attached, its `-e has-readme` run
+recomputes the chart digest and compares it against your report (`Digest is not matching`
+otherwise) — that digest check is what attaching the chart buys you. Report-only, CI instead
+GETs the report's own `chart-uri` and sha256s the bytes against `digests.package`: a mismatch
+fails the submission, while an unreachable URL only logs a warning and skips the comparison
+(a malformed or schema-less URL *does* fail). Only web-catalog-only submissions skip this
+entirely.
+
+Chart name and version are checked on *every* submission, report-only included: they must
+match the `charts/<category>/<org>/<chart>/<version>/` path, and the generated report is
+brought into that comparison only when one exists.
+
 ---
 
 ## 3. Run chart-verifier
 
 CI installs the verifier as a binary via `redhat-actions/openshift-tools-installer`, tracking
-**`latest`** for the production charts repo (no pinned digest). Locally, run the container:
+**`latest`** for the production charts repo (no pinned digest). CI runs it with `fail: false`,
+so failed checks do not fail that step — the pass/fail gate is the later *Check Report* step.
+A red *Run chart-verifier* step means the verifier itself errored, not that a check failed.
+
+Locally, run the container:
 
 ```bash
 podman run --rm -i \
@@ -299,7 +320,8 @@ No API equivalent exists in the CI repo. Stop, hand over, wait.
 | `has-kubeversion` FAIL | `kubeVersion` absent, or not a valid semver range under v1.1+ | add e.g. `kubeVersion: ">=1.25.0-0"`; re-run verify to regenerate `supportedOpenShiftVersions` |
 | `[ERROR] Missing annotation in chart/report: charts.openshift.io/supportedOpenShiftVersions` | report generated under profile v1.0, or hand-edited | regenerate with `--set profile.version=v1.1`; never edit the report |
 | `Kube Version ... does not match supportedOpenShiftVersions` | annotation not string-equal to the range derived from `kubeVersion` | regenerate the report; do not hand-write the annotation |
-| `testedOpenShiftVersion` outside `supportedOpenShiftVersions`, or `< 4.1.0` | verifier ran on an out-of-range or unsupported cluster | widen `kubeVersion` or re-run on an in-range cluster |
+| `Tested OpenShift version X not within specified kube-versions` / `... not within supported versions` | verifier ran outside the OCP range derived from `kubeVersion` | widen `kubeVersion` or re-run on an in-range cluster |
+| `charts.openshift.io/testedOpenShiftVersion X is not a supported OpenShift version.` | verifier ran on OCP older than 4.1.0, the minimum with Helm support | re-run on OCP >= 4.1.0 |
 | Report rejected / digest mismatch | report edited after generation (content sha since 1.9.0) | regenerate |
 | Verifier version skew — a check unknown locally is required by CI | CI tracks `latest`; local image is older | pull `:latest` and re-run before pushing; re-check after any verifier release |
 | `[ERROR] Report profile type 'X' doesn't match the vendor type in the directory path` | `profile.vendorType` ≠ the path category | re-run verify with the matching vendor type |
@@ -310,6 +332,12 @@ No API equivalent exists in the CI repo. Stop, hand over, wait.
 | `PGP key in OWNERS file does not match with key digest in report.` | stale `publicPgpKey`, or chart signed with a different key | re-export, update `OWNERS`, regenerate the report with `--pgp-public-key` |
 | Version rejected as already released | version present in `index.yaml` or tag exists | bump `version`, rename the directory, regenerate the report |
 | `Both chart source directory and tarball should not exist` | `src/` and `.tgz` both submitted | keep one |
+| `[ERROR] OWNERS file should never be set directly by partners. See certification docs.` | a partner PR touches `OWNERS` at all | drop it; `redhat-mercury-bot` pushes it on behalf of Connect (§ 7) |
+| `[ERROR] the tgz file is named incorrectly. Expected: X. Got: Y` | tarball not named `<chart>-<version>.tgz` | rename; it must match `Chart.yaml` and the version directory |
+| `[ERROR] Incorrect tarball content: found a file outside the <chart> directory` | archive has files at its root, or the wrong top-level directory | repackage with `helm package`; exactly one top-level directory holding `Chart.yaml` |
+| `[ERROR] One or more files included in the pull request are not part of the chart` | a file outside the recognised report / source / tarball set | remove it; unrelated changes need their own PR |
+| `[ERROR] The web catalog distribution method requires a package digest in the report.` | web-catalog-only report carries no package digest | regenerate with `-W` against the packaged chart, not the source tree |
+| `[ERROR] Digest is not matching: <submitted>, <generated>` | report submitted alongside a chart it does not describe | regenerate the report from the exact chart in the PR |
 | Community PR green but not merged | community always needs maintainer review | request review; only a maintainer can apply `force-publish` |
 
 ---
